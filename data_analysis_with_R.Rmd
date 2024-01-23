@@ -1,0 +1,460 @@
+---
+title: 'Data science (Coursework: Project on Data Analysis)'
+author: "Nhu Minh Tuan Nguyen - 500669558 - nhn22nhk@bangor.ac.uk"
+output:
+  word_document: default
+  html_document:
+    citation_package: natbib
+  pdf_document: default
+---
+
+### Module Code: ASB/ABJ-4012
+### Module Coordinator: Heather He
+
+```{r setup, include=FALSE}
+# Import library
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(DBI)
+library(RMySQL)
+library(ggcorrplot)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+```
+
+## Connect to Database 
+
+```{r connect}
+
+USER <- 'sql8676484'          
+PASSWORD <- 'wCai76aZtn' 
+HOST <- 'sql8.freesqldatabase.com'     
+DBNAME <- 'sql8676484'      
+
+con <- dbConnect(MySQL(), user = USER, password = PASSWORD, host = HOST, dbname = DBNAME, port=3306)
+
+```
+
+## Check the structure of the database
+```{r snapshot of database}
+
+tables <- dbListTables(con)
+tables
+
+for (tbl in tables) {
+  cat(paste("\nTable:", tbl, "\n"))
+  cat("---------------------------\n")
+  fields <- dbListFields(con, tbl)
+  cat(paste(fields, collapse = "\n"), "\n")
+}
+```
+
+## I. Data Discovery
+### 1.1. Data description 
+
+Access to the BangorTelco_Customers database has been granted by the IT team. This database has a comprehensive collection of 20,000 customer records, comprising individuals who have both terminated their contract and those who have remained with the company to the end of their contract. 
+
+
+```{r import data and summarize}
+# Import bangortele_customer data 
+data <- dbGetQuery(con, statement = "Select * from bangortele_customer")
+dbDisconnect(con)
+# View the first few rows
+head(data)
+
+# Check the structure of the dataset
+str(data)
+# Generate summary statistics
+summary(data)
+```
+### 1.2. Data Summary
+- Dataset name: BangorTelco Customer Data
+- Total observations (total rows): 20,000
+- Total variables (total columns): 13
+- Data types:
+  + CUSTOMERID: Character (Unique customer identifier)
+  + COLLEGE: Character (Indicates if the customer is college-educated, values are 'zero' or 'one')
+  + INCOME: Integer (Annual income of the customer)
+  + OVERAGE: Integer (Average monthly overcharges)
+  + LEFTOVER: Integer (Average percentage of leftover minutes per month)
+  + HOUSE: Integer (Value of dwelling from census data)
+  + HANDSET_PRICE: Integer (Cost of the phone)
+  + OVER_15MINS_CALLS_PER_MONTH: Integer (Average number of calls over 15 minutes per month)
+  + AVERAGE_CALL_DURATION: Integer (Average duration of calls)
+  + REPORTED_SATISFACTION: Character (Customer’s reported level of satisfaction)
+  + REPORTED_USAGE_LEVEL: Character (Self-reported usage level)
+  + CONSIDERING_CHANGE_OF_PLAN: Character (Indicates if the customer was considering changing their plan)
+  + LEAVE: Character (Indicates whether the customer left or stayed, values are 'STAY' or 'LEAVE')
+
+## II. Data Transformation 
+
+Data transformation is a crucial step in data preprocessing, since it is necessary for preparing datasets for further analytical or machine learning tasks. This transformation method involves altering data from its original format into a structure that is better suited for analytical techniques. In relation to the "BangorTelco Customer Data" dataset, two primary operations were performed: renaming columns and converting character data types to integers.
+
+### 2.1. Conversion of Character Columns to Integers
+
+- Rationale: The dataset included multiple columns containing category data that was represented as character strings. This format is generally not ideal for numerical analysis or machine learning algorithms, as these algorithms normally perform better with numerical inputs.
+- Approach: converting the columns 'COLLEGE', 'REPORTED_SATISFACTION', 'REPORTED_USAGE_LEVEL', and 'CONSIDERING_CHANGE_OF_PLAN' into integer values. As an illustration, the 'COLLEGE' column was converted from the values 'zero' and 'one' to the numerical values 0 and 1, correspondingly. For the remaining columns, a systematic ordinal mapping was implemented. For instance, the mapping from 'very_unsat' to 'very_sat' was converted to integers ranging from 1 to 5. The modification was accomplished by utilising the mutate and case_when functions from the dplyr package.
+```{r  Conversion of Character Columns to Integers}
+data <- data %>%
+  mutate(
+    COLLEGE = as.integer(ifelse(COLLEGE == "zero", 0, 1)),
+    LEAVE = as.integer(ifelse(LEAVE == "LEAVE", 1, 0)),
+    REPORTED_SATISFACTION = as.integer(case_when(
+      REPORTED_SATISFACTION == "very_unsat" ~ 1,
+      REPORTED_SATISFACTION == "unsat" ~ 2,
+      REPORTED_SATISFACTION == "avg" ~ 3,
+      REPORTED_SATISFACTION == "sat" ~ 4,
+      REPORTED_SATISFACTION == "very_sat" ~ 5
+    )),
+    REPORTED_USAGE_LEVEL = as.integer(case_when(
+      REPORTED_USAGE_LEVEL == "very_little" ~ 1,
+      REPORTED_USAGE_LEVEL == "little" ~ 2,
+      REPORTED_USAGE_LEVEL == "avg" ~ 3,
+      REPORTED_USAGE_LEVEL == "high" ~ 4,
+      REPORTED_USAGE_LEVEL == "very_high" ~ 5
+    )),
+    CONSIDERING_CHANGE_OF_PLAN = as.integer(case_when(
+      CONSIDERING_CHANGE_OF_PLAN == "never_thought" ~ 1,
+      CONSIDERING_CHANGE_OF_PLAN == "no" ~ 2,
+      CONSIDERING_CHANGE_OF_PLAN == "perhaps" ~ 3,
+      CONSIDERING_CHANGE_OF_PLAN == "considering" ~ 4,
+      CONSIDERING_CHANGE_OF_PLAN == "actively_looking_into_it" ~ 5
+    ))
+  )
+head(data)
+```
+### 2.2. Modification of Column Names
+
+- Rationale: The original naming system for the columns used capital letters and long names, which could cause difficulties when working with and coding data. The prolonged length of these names increases the probability of typographical errors and diminishes the readability of the code.
+- Approach: The conversion was made possible by utilising the dplyr and stringr libraries in the R programming language. The rename function from the dplyr package was used to assign fresh, concise, and more descriptive names to each column. Afterwards, the str_to_lower function from the stringr package was employed to transform all column names into lowercase, thus guaranteeing consistency and facilitating the typing process during analysis.
+
+``` {r Modification of Column Names}
+# Rename columns: converting to lowercase and shortening
+data <- data %>%
+  rename(
+    customer_id = CUSTOMERID,
+    college = COLLEGE,
+    income = INCOME,
+    overage = OVERAGE,
+    leftover = LEFTOVER,
+    house_value = HOUSE,
+    handset_price = HANDSET_PRICE,
+    calls_over_15mins = OVER_15MINS_CALLS_PER_MONTH,
+    avg_call_duration = AVERAGE_CALL_DURATION,
+    satisfaction = REPORTED_SATISFACTION,
+    usage_level = REPORTED_USAGE_LEVEL,
+    change_plan_consideration = CONSIDERING_CHANGE_OF_PLAN,
+    leave_status = LEAVE
+  )
+
+# Convert column names to lowercase
+names(data) <- tolower(names(data))
+
+# Viewing the renamed and transformed data
+head(data)
+```
+
+## III. Data Analysis
+
+### Task 1: Understanding Customer Churn at BangorTelco
+```{r}
+# Splitting the data into training and testing sets
+data_decision_tree <- data
+data_decision_tree <- data_decision_tree[, -which(names(data_decision_tree) == "customer_id")]
+set.seed(42) # for reproducibility
+training_index <- sample(1:nrow(data_decision_tree), 0.8 * nrow(data_decision_tree)) # 80% for training
+training_decision_tree <- data_decision_tree[training_index, ]
+testing_decision_tree <- data_decision_tree[-training_index, ]
+
+```
+- run and save model 
+```{r}
+
+model <- rpart(leave_status ~ ., data = training_decision_tree, method = "class",)  
+
+saveRDS(model,"TreeModel.RDS")
+```
+- load model and predict 
+```{r}
+loaded_tree_model <- readRDS("TreeModel.RDS")
+
+rpart.plot(loaded_tree_model)
+predictions <- predict(loaded_tree_model, testing_decision_tree, type = "class")
+```
+```{r}
+confusionMatrix <- table(as.factor(testing_decision_tree$leave_status), predictions)
+print(confusionMatrix)
+accuracy <- sum(diag(confusionMatrix)) / sum(confusionMatrix)
+print(paste("Accuracy:", accuracy))
+probabilities <- predict(loaded_tree_model, testing_decision_tree, type = "prob")[,2]
+
+# Compute ROC curve
+roc_obj <- roc(testing_decision_tree$leave_status, probabilities)
+
+# Plot ROC curve
+plot(roc_obj, main="ROC Curve for Decision Tree", print.auc = TRUE)
+
+
+```
++ The decision tree is a model that predicts a binary outcome (labelled as '0' or '1') based on the input variables. The tree splits at nodes using certain criteria:
+  1. house_value >= 600e+3 (600,000)
+  2. income < 100e+3 (100,000)
+  3. overage < 108
+  4. leftover < 25
+  5. eftover >= 3
+
++ The leaves of the tree indicate the final prediction of the model ('0' or '1') for the combinations of criteria leading to that leaf. Each leaf also shows the probability of '0' and '1' at that leaf, as well as the percentage of samples that reached that leaf.
+
++ The predictions matrix shows the number of true positive, false positive, true negative, and false negative predictions:
+
+  + 0 0: True negatives (1152 instances were correctly predicted as class '0')
+  + 1 0: False negatives (311 instances were incorrectly predicted as class '0' when they were actually class '1')
+  + 0 1: False positives (884 instances were incorrectly predicted as class '1' when they were actually class '0')
+  + 1 1: True positives (1653 instances were correctly predicted as class '1')
+  The accuracy is calculated as the number of correct predictions (both true positives and true negatives) divided by the total number of predictions. According to your result, the accuracy of the decision tree model on your dataset is approximately 70.125% (calculated as (1152 + 1653) / (1152 + 311 + 884 + 1653)).
+
++ ROC Curve Shape: The curve should ideally bow towards the top left corner of the plot, indicating a high true positive rate and a low false positive rate. the curve bows towards the upper left, which is a good sign.
+
++ AUC Value: The AUC value ranges from 0 to 1. An AUC of 0.5 suggests no discrimination (i.e., the model has no classification value, essentially random), while an AUC of 1.0 indicates perfect discrimination. The AUC is 0.756, which suggests that the model has a good classification ability. It's not perfect, but it's much better than a coin flip.
+
++ Interpreting AUC:
+
+  + 0.5: No better than random chance.
+  + 0.5 - 0.7: Considered poor.
+  + 0.7 - 0.8: Considered fair.
+  + 0.8 - 0.9: Considered good.
+  + 0.9 - 1.0: Considered excellent.
+  -> Given that your AUC is 0.756, the model is in the 'fair' range, indicating it has a reasonable ability to distinguish between the positive and negative classes.
+
++ In summary, the decision tree classifier does a fair job in classifying the positive class but isn't perfect. The closer the AUC is to 1, the better it is at predicting the positive class without incorrectly predicting the negative class as positive.
+
+
+### Task 2: Logistic Regression
+```{r}
+# Splitting the data into training and testing sets
+data_logistic <- data
+data_logistic <- data_logistic[, -which(names(data_logistic) == "customer_id")]
+library(tree)
+set.seed(42) # for reproducibility
+training_index <- sample(1:nrow(data_logistic), 0.8 * nrow(data_logistic)) # 80% for training
+training_logistic <- data_logistic[training_index, ]
+testing_logistic <- data_logistic[-training_index, ]
+
+```
+- run and save model
+```{r}
+# Logistic Regression Model
+model <- glm(leave_status ~ ., data = training_logistic, family = "binomial")
+saveRDS(model,"LogisticModel.RDS")
+
+```
+
+- load model and run predict 
+```{r}
+loaded_logistic_model <- readRDS("LogisticModel.RDS")
+
+# Display model summary
+summary(loaded_logistic_model)
+
+
+# Predict probabilities on test data
+testing_logistic$probabilities <- predict(loaded_logistic_model, newdata = testing_logistic, type = "response")
+```
++ Model Summary
+  - Call: This shows the function call to create the model. Used glm with a binomial family, which is appropriate for logistic regression.
+  - Coefficients: This table includes the estimates (effect size), standard errors, z-values, and p-values for each predictor in your model.
++ Interpretation of Coefficients
+  Each coefficient represents the log odds of the outcome (customer leaving) for a one-unit change in the predictor, holding all other predictors constant.
+
+  - (Intercept): The baseline log odds of a customer leaving when all other predictors are zero.
+  - College (positive coefficient): Indicates that higher values (likely indicating higher education levels) are associated with a slightly higher probability of leaving.
+  - Income (positive coefficient): Suggests that higher income slightly increases the likelihood of leaving.
+  - Overage, Leftover, House Value, Handset Price, Calls over 15 mins, Avg Call Duration: All have significant positive or negative coefficients, indicating they are important predictors in determining whether a customer will leave.
+  - Satisfaction, Usage Level, Change Plan Consideration: These variables are not statistically significant at traditional levels (p > 0.05), suggesting they might not be strong predictors in this context.
++ Model Fit and Significance
+  - Null Deviance vs Residual Deviance: The decrease from the null deviance to the residual deviance shows that your model is better than an empty model. 
+  - AIC (Akaike Information Criterion): A measure of the relative quality of the model; lower AIC suggests a better model. 
+  - Significance Codes: Asterisks next to coefficients indicate their significance levels, helping to identify the most influential predictors.
+
++ Overall Evaluation
+  -> The model seems statistically robust, with several significant predictors. 
+```{r}
+# Create tahe ROC object
+roc_obj <- roc(testing_logistic$leave_status, testing_logistic$probabilities)
+
+# Plot the ROC curve
+plot(roc_obj, main = "ROC Curve with AUC", print.auc= TRUE)
+# abline(a = 0, b = 1, lty = 2, col = "red")  # Adds a reference line
+testing_logistic$predicted_class <- ifelse(testing_logistic$probabilities > 0.5,1, 0)
+table(Actual=testing_logistic$leave_status, Predicted = testing_logistic$predicted_class)
+mean(testing_logistic$predicted_class==testing_logistic$leave_status)
+
+
+```
+
++ ROC Curve
+  - The ROC curve is a plot of the true positive rate (sensitivity) against the false positive rate (1 - specificity) at various threshold settings.
+  - The diagonal line represents the performance of a random classifier (AUC = 0.5).
+  - The curve above the diagonal indicates the model's ability to classify more correctly than by chance. The further the curve is from the diagonal line, the better the model's performance.
++ AUC Value
+  - The AUC value is 0.698, which is less than 0.7 but greater than 0.5. This suggests that the model has a fair discrimination ability but is not considered excellent (which would be closer to 1).
+  - An AUC of 0.698 means that there is approximately a 69.8% chance that the model will be able to distinguish between a customer who will leave and one who will not.
+
++ Confusion Matrix and Accuracy
+  - True Negatives (TN): 1326 - The model correctly predicted that 1326 customers would not leave.
+  - False Positives (FP): 710 - The model incorrectly predicted that 710 customers would leave when they actually did not.
+  - False Negatives (FN): 746 - The model incorrectly predicted that 746 customers would not leave when they actually did.
+  - True Positives (TP): 1218 - The model correctly predicted that 1218 customers would leave.
+
+  - Sensitivity (Recall): 62.0% - The model correctly identifies 62.0% of the customers who will leave.
+  - Specificity: 65.1% - The model correctly identifies 65.1% of the customers who will not leave.
+  - Precision: 63.2% - When the model predicts a customer will leave, it is correct about 63.2% of the time.
+  - F1 Score: 62.6% - The F1 score, which balances precision and recall, is 62.6%.
+
++ Evaluation:
+  - Accuracy: At 63.6%, the model is correct in its predictions roughly two-thirds of the time. This is a moderate accuracy and suggests that the model has room for improvement.
+  - Sensitivity and Specificity: These are also moderate, indicating that the model is somewhat balanced in predicting both classes but not particularly strong in either.
+  - Precision: This suggests that of all the customers the model predicts will leave, a bit over three out of five predictions are correct.
+  - F1 Score: Since it's closer to the accuracy, it confirms that the model doesn't have a strong bias towards either class (leaving or not leaving).
+
+
+### Task 3: k Nearest Neighbours (KNN) 
+```{r}
+library(class)
+library(caret)
+
+data_knn <- data
+data_knn <- data_knn[, -which(names(data_knn) == "customer_id")]
+
+# Convert categorical variables to factors
+data_knn$college <- as.factor(data_knn$college)
+data_knn$leave_status <- as.factor(data_knn$leave_status)
+
+# Split the data into training and testing sets
+set.seed(123)
+trainIndex <- createDataPartition(data_knn$leave_status, p = 0.8, list = FALSE)
+trainData <- data_knn[trainIndex, ]
+testData <- data_knn[-trainIndex, ]
+
+# Define the predictor variables
+predictors <- c("college", "income", "overage", "leftover", "house_value",
+                "handset_price", "calls_over_15mins", "avg_call_duration",
+                "satisfaction", "usage_level", "change_plan_consideration")
+
+# Train the kNN model
+knnModel <- train(leave_status ~ ., data = trainData[, c(predictors, "leave_status")],
+                  method = "knn",
+                  trControl = trainControl(method = "cv", number = 5),
+                  preProcess = c("center", "scale"))
+summary(knnModel)
+saveRDS(knnModel,"KnnModel.RDS")
+
+```
+
+- load model and run predict 
+```{r}
+loaded_knn_model_new <- readRDS("KnnModel.RDS")
+
+# Predict probabilities for the test data
+testData$predictions <- predict(loaded_knn_model_new, newdata = testData)
+
+
+
+# Evaluate the model
+confusionMatrix(testData$predictions , testData$leave_status)
+head(testData$predictions)
+roc_obj <- roc(as.numeric(testData$leave_status) , as.numeric(testData$predictions))
+
+# Plot the ROC curve
+plot(roc_obj, main = "ROC Curve with AUC", print.auc= TRUE)
+```
+
++ Accuracy (0.6494 or 64.94%): This is the proportion of true results (both true positives and true negatives) among the total number of cases examined. For a balanced dataset (where instances of both classes are roughly equal), this is a straightforward measure of performance.
+
++ 95% CI (0.6344, 0.6642): This confidence interval suggests that, if the model were trained multiple times, the accuracy would fall within this range 95% of the time. The narrow range indicates a relatively precise estimate of accuracy.
+
++ No Information Rate (0.5074 or 50.74%): This is the accuracy that could be achieved by always predicting the most frequent class. If your accuracy is only slightly above this, it suggests the model isn't much better than a naive guess.
+
++ P-Value [Acc > NIR] (<2e-16): This p-value tests the null hypothesis that the model is no better than random chance at predicting the positive class. A p-value this small indicates that the model's accuracy is statistically significantly better than the No Information Rate.
+
++ Kappa (0.2984): The Kappa statistic is a measure of how much better the classifier is performing over the performance of a classifier that simply guesses at random according to the frequency of each class. A Kappa value of 0.2984 suggests a fair agreement beyond chance.
+
++ Mcnemar's Test P-Value (0.1907): This is a statistical test that compares the predictive accuracy on different sets within the data. A high p-value suggests there is no significant difference in the performance of the model on these sets.
+
++ Sensitivity (0.6668 or 66.68%): Also known as the true positive rate, it measures the proportion of actual positives that are correctly identified as such.
+
++ Specificity (0.6315 or 63.15%): This is the proportion of actual negatives that are correctly identified, also known as the true negative rate.
+
++ Positive Predictive Value (0.6508 or 65.08%): This is the proportion of positive identifications that were actually correct.
+
++ Negative Predictive Value (0.6479 or 64.79%): This is the proportion of negative identifications that were actually correct.
+
++ Prevalence (0.5074 or 50.74%): The proportion of cases in the dataset that are the positive class.
+
++ Detection Rate (0.3383 or 33.83%): The proportion of the entire dataset that are true positives.
+
++ Detection Prevalence (0.5199 or 51.99%): The proportion of cases that are predicted as the positive class.
+
++ Balanced Accuracy (0.6492 or 64.92%): The average of sensitivity and specificity. It is a better measure than accuracy for imbalanced datasets.
+
++ ROC Curve with AUC (0.649): The ROC curve plots the true positive rate against the false positive rate at various threshold settings. The AUC (Area Under the Curve) represents the model's ability to discriminate between the positive and negative classes. An AUC of 0.649 means the model is moderately good at distinguishing between customers who will leave and those who won't. An AUC of 0.5 suggests no discriminative ability (equivalent to random chance), and an AUC of 1.0 indicates perfect discrimination.
+
++ Interpretation:
+ The model has moderate performance metrics, with an accuracy and AUC both around 0.65. While these figures are better than random chance (with a very low p-value indicating statistical significance), they are not particularly high for predictive modeling. A Kappa of 0.2984 indicates only fair agreement beyond chance, suggesting there is considerable room for improvement.
+ 
+ 
+### Task 4: Clustering
+
+```{r}
+set.seed(123) # for reproducibility
+clusters <- kmeans(data[, c("income", "overage", "leftover", "house_value", "handset_price", "calls_over_15mins", "avg_call_duration")], centers=3)
+head(clusters)
+
+```
+
+- Based on the results of the K-means clustering analysis, the dataset has been divided into three distinct groups (or clusters) with the following characteristics:
+
++ Cluster Characteristics
+  1. Cluster 1 (Size: 8682)
+
+  + Income: $81,157
+  + Overage: $86
+  + Leftover: 24%
+  + House Value: $253,860
+  + Handset Price: $393
+  + Calls over 15 Mins: 8
+  + Average Call Duration: 6 minutes
+
+
+  2.luster 2 (Size: 6008)
+
+  + Income: $79,026
+  + Overage: $85
+  + Leftover: 24%
+  + House Value: $530,839
+  + Handset Price: $386
+  + Calls over 15 Mins: 8
+  + Average Call Duration: 6 minutes
+
+  3.Cluster 3 (Size: 5310)
+
+  + Income: $80,271
+  + Overage: $87
+  + Leftover: 24%
+  + House Value: $841,772
+  + Handset Price: $388
+  + Calls over 15 Mins: 8
+  + Average Call Duration: 6 minutes
+
++ Business Interpretation
+
+  - When interpreting these clusters in business terms, consider factors like income, handset price, and house value, which can be indicators of customer purchasing power and lifestyle preferences.
+
+  + Cluster 1 - "Mid-Range Customers": This group has moderate income levels and house values, and they spend a reasonable amount on handsets. They might represent a middle-class demographic. This group can be targeted with mid-range service plans and handset offers that balance quality with affordability.
+
+  + Cluster 2 - "Upscale Urban Customers": Characterized by higher house values, this cluster may represent more affluent customers living in high-value urban areas. They have similar income and handset spending as Cluster 1, but they might value premium services and are likely willing to pay more for high-quality, advanced features.
+
+  + Cluster 3 - "High-Value Customers": With the highest average house values, this cluster likely represents the most affluent segment of the customer base. They have similar handset spending and call behavior as the other clusters but live in significantly more valuable homes. This group may be the primary target for high-end products and services, including the latest handsets and premium service packages.
